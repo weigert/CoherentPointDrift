@@ -6,6 +6,9 @@ Example programs include a very basic useage and a version with visualization. T
 
 Reference: Point Set Registration: Coherent Point Drift, Andriy Myronenko and Xubo Song (2010)
 
+![Coherent Point Drift Example on Cuboid with 3 Different Side Lengths, Constant Scale](https://github.com/weigert/CoherentPointDrift/blob/master/screenshots/cpd.gif)
+Coherent Point Drift Example on Cuboid with 3 Different Side Lengths, Constant Scale. Example Program 1
+
 ## Algorithm
 
 This is an expectation maximization algorithm which estimates the rigid transformation parameters of between two point clouds. It assumes that one point cloud is a gaussian mixture model from which the other is generated. We can compute a likelihood of points being generated from this mixture model (assignments) and use this to find optimal transform parameters using expectation maximization of the posterior distribution (i.e. parameters given evidence of assignments).
