@@ -7,6 +7,7 @@ Example programs include a very basic useage and a version with visualization. T
 Reference: Point Set Registration: Coherent Point Drift, Andriy Myronenko and Xubo Song (2010)
 
 ![Coherent Point Drift Example on Cuboid with 3 Different Side Lengths, Constant Scale](https://github.com/weigert/CoherentPointDrift/blob/master/screenshots/cpd.gif)
+
 Coherent Point Drift Example on Cuboid with 3 Different Side Lengths, Constant Scale. Example Program 1
 
 ## Algorithm
