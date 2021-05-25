@@ -4,7 +4,7 @@ Single-Header Reference Implementation of Rigid Coherent Point Drift in C++ / Ei
 
 Reference: Point Set Registration: Coherent Point Drift, Andriy Myronenko and Xubo Song (2010)
 
-**Note: This repo will be cleaned soon**
+**Note: This repo will be cleaned soon. The algorithm is 100% functional and fast!**
 
 ## Algorithm
 
