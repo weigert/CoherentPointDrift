@@ -7,6 +7,7 @@ Author: Nicholas McDonald
 
 #include <Eigen/Dense>
 #include <Eigen/SVD>
+#include <glm/glm.hpp>
 #include <functional>
 #include <iostream>
 

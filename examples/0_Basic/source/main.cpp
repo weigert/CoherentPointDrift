@@ -1,5 +1,5 @@
-#include "include/shape.h"
 #include "../../../cpd.h"
+#include "include/shape.h"
 #include <glm/gtx/string_cast.hpp>
 
 int main( int argc, char* args[] ) {
