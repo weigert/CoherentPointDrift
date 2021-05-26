@@ -49,13 +49,23 @@ void noise(vector<vec3>& pointset, float std){
 }
 
 //Random 3D Rotation Matrix!
-glm::mat4 randrot(){
+glm::mat4 randomtransform(){
+
   quat q;
   q.x = dist::normal(0, 1);
   q.y = dist::normal(0, 1);
   q.z = dist::normal(0, 1);
   q.w = dist::normal(0, 1);
-  return toMat4(normalize(q));
+
+  glm::mat4 transform = toMat4(normalize(q));
+
+  //Add Random Translation
+  transform[3][0] = 50.0f*uniform01(generator);
+  transform[3][1] = 50.0f*uniform01(generator);
+  transform[3][2] = 50.0f*uniform01(generator);
+
+  return transform;
+  
 }
 
 }
