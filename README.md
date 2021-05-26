@@ -37,6 +37,7 @@ Enter the relevant example folders and use the make files. Binaries are built in
 `cpd.h`
 
     - Eigen3
+    - glm (not strictly necessary, just for ease of use)
 
 `/examples/1_Visual`
 
