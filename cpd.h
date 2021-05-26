@@ -32,6 +32,8 @@ float var;        //Variance
 
 float w = 0.0f;   //Noise Estimate (Free Parameter)
 MatrixXf P;       //Posterior Probability Matrix (Assignments)
+VectorXf PX;      //Sum over X
+VectorXf PY;      //Sum over Y
 
 //Options
 bool enforcescale = true; //Force Scale to be s = 1
@@ -41,6 +43,8 @@ bool enforcescale = true; //Force Scale to be s = 1
               Initialization, Estimation and Maximization Steps
 ================================================================================
 */
+
+JacobiSVD<MatrixXf> svd;
 
 void initialize(MatrixXf& X, MatrixXf& Y){
 
@@ -85,37 +89,36 @@ void estimate(MatrixXf& X, MatrixXf& Y){
       P(m,n) /= Z;
   }
 
+  PY = P.rowwise().sum();           //Sum over all n
+  PX = P.colwise().sum();           //Sum over all m
+
 }
 
 void maximize(MatrixXf& X, MatrixXf& Y){
 
-  float Np = P.sum();                                     //Normalization Constant
-  VectorXf P1 = P*MatrixXf::Ones(N,1);                    //Sum over all n
-  VectorXf PT1 = P.transpose()*MatrixXf::Ones(M,1);       //Sum over all m
-  Vector3f uX = X.transpose()*PT1/Np;                     //Average Position, X-Set
-  Vector3f uY = Y.transpose()*P1/Np;                      //Average Position, Y-Set
+  float Np = 1.0f/P.sum();                                //Normalization Constant
+  Vector3f uX = X.transpose()*PX*Np;                      //Average Position, X-Set
+  Vector3f uY = Y.transpose()*PY*Np;                      //Average Position, Y-Set
 
-  MatrixXf XC = X - MatrixXf::Ones(N,1)*uX.transpose();   //Centered X-Set
-  MatrixXf YC = Y - MatrixXf::Ones(M,1)*uY.transpose();   //Centered Y-Set
+  MatrixXf XC = X.rowwise() - uX.transpose();             //Centered X-Set
+  MatrixXf YC = Y.rowwise() - uY.transpose();             //Centered Y-Set
 
   MatrixXf A = XC.transpose()*P.transpose()*YC;           //Singular Value Decomp. Matrix
 
-  JacobiSVD<MatrixXf> svd(A, ComputeFullU|ComputeFullV);  //Compute the SVD of A
+  svd.compute(A, ComputeFullU|ComputeFullV);              //Compute the SVD of A
   MatrixXf U = svd.matrixU();                             //Get the SVD Matrix U
   MatrixXf V = svd.matrixV();                             //Get the SVD Matrix V
 
-  MatrixXf C = MatrixXf::Zero(D, D);                      //Construct the SVD-Derived Matrix C
-  for(int i = 0; i < D-1; i++)
-    C(i, i) = 1;
+  MatrixXf C = MatrixXf::Identity(D, D);                  //Construct the SVD-Derived Matrix C
   C(D-1, D-1) = (U*V.transpose()).determinant();
 
   //Compute the Rigid Transformation Parameters
   R = U*C*V.transpose();
-  s = (A.transpose()*R).trace()/(YC.transpose()*P1.asDiagonal()*YC).trace();
+  s = (A.transpose()*R).trace()/(YC.transpose()*PY.asDiagonal()*YC).trace();
   t = uX - s*R*uY;
 
   //Recompute Standard Deviation
-  var = 1.0f/(Np*D)*((XC.transpose()*PT1.asDiagonal()*XC).trace() - s*(A.transpose()*R).trace());
+  var = Np/D*((XC.transpose()*PX.asDiagonal()*XC).trace() - s*(A.transpose()*R).trace());
 
   if(enforcescale) s = 1.0f;  //Enforce Constant Scale
 
@@ -144,9 +147,20 @@ bool itersolve(MatrixXf& X, MatrixXf& Y, int& N, const float tol = 0.01f){
   oldvar = var;
   cout<<"Iteration: "<<N<<endl;
   cout<<"Estimating..."<<endl;
+  timer::benchmark<std::chrono::milliseconds>([&](){
+
   cpd::estimate(X, Y);
+
+  });
+
   cout<<"Maximizing..."<<endl;
+
+  timer::benchmark<std::chrono::milliseconds>([&](){
+
   cpd::maximize(X, Y);
+
+  });
+
   cpd::output();
   return true;
 
@@ -157,13 +171,12 @@ void solve(MatrixXf& X, MatrixXf& Y, const int maxN, const float tol = 0.01f){
   while(itersolve(X, Y, niter, tol));
 }
 
-
 mat4 rigid(){                       //Extract a glm-based 4x4 transformation matrix from Y->X
   mat4 transform = {s*R(0,0), s*R(0,1), s*R(0,2), t(0),
                     s*R(1,0), s*R(1,1), s*R(1,2), t(1),
                     s*R(2,0), s*R(2,1), s*R(2,2), t(2),
                     0,        0,        0,        1.0f};
-  return glm::transpose(transform); //Tranpose because of Column Major Ordering
+  return transpose(transform); //Tranpose because of Column Major Ordering
 }
 
 /*

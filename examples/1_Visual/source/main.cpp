@@ -2,6 +2,7 @@
 #include <TinyEngine/image>
 #include <TinyEngine/color>
 #include <TinyEngine/camera>
+#include <TinyEngine/timer>
 
 #include "include/shape.h"
 #include "../../../cpd.h"
@@ -18,9 +19,11 @@ int main( int argc, char* args[] ) {
 
 	Square3D model;									//Model we want to instance render!
 
+	const int Npoints = 2500;
+
 	//Generate Point Clouds
-	std::vector<glm::vec3> pointsA = shape::cube(1000, glm::vec3(0.25, 0.5, 1.0f));
-	std::vector<glm::vec3> pointsB = shape::cube(1000, glm::vec3(0.25, 0.5, 1.0f));
+	std::vector<glm::vec3> pointsA = shape::cube(Npoints, glm::vec3(0.25, 0.5, 1.0f));
+	std::vector<glm::vec3> pointsB = shape::cube(Npoints, glm::vec3(0.25, 0.5, 1.0f));
 
 	glm::mat4 rtrans = shape::randomtransform();
 
