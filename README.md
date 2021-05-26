@@ -4,7 +4,7 @@ Single-Header Reference Implementation of Rigid Coherent Point Drift in C++ / Ei
 
 Example programs include a very basic useage and a version with visualization. The algorithm is performant but not optimized with fast gaussian transform (yet).
 
-The algorithm is robust against noise and occlusion.
+The algorithm is robust against noise and occlusion, and generalizes seamlessly into N dimensions.
 
 Reference: Point Set Registration: Coherent Point Drift, Andriy Myronenko and Xubo Song (2010)
 
