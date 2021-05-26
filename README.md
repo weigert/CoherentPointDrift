@@ -24,6 +24,14 @@ The actual CPD portion is separated out cleanly in a header so it can be reutili
 
 The relevant portion of the code is only about 80 lines of code, but makes use of existing linear algebra routines provided by Eigen.
 
+### Building / Running Examples
+
+Enter the relevant example folders and use the make files. Binaries are built in place.
+
+    cd examples/0_Basic
+    make all
+    ./main
+
 ### Dependencies
 
 `cpd.h`

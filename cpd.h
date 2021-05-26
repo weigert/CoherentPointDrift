@@ -8,6 +8,7 @@ Author: Nicholas McDonald
 #include <Eigen/Dense>
 #include <Eigen/SVD>
 #include <functional>
+#include <iostream>
 
 #define PI 3.14159265f
 
