@@ -156,12 +156,12 @@ void solve(MatrixXf& X, MatrixXf& Y, const int maxN, const float tol = 0.01f){
 }
 
 
-mat4 rigid(){      //Extract a glm-based 4x4 transformation matrix
+mat4 rigid(){                       //Extract a glm-based 4x4 transformation matrix from Y->X
   mat4 transform = {s*R(0,0), s*R(0,1), s*R(0,2), t(0),
                     s*R(1,0), s*R(1,1), s*R(1,2), t(1),
                     s*R(2,0), s*R(2,1), s*R(2,2), t(2),
                     0,        0,        0,        1.0f};
-  return transform;
+  return glm::transpose(transform); //Tranpose because of Column Major Ordering
 }
 
 /*
