@@ -1,10 +1,16 @@
 # Coherent Point Drift
 
-Single-Header Reference Implementation of Rigid Coherent Point Drift in C++ / Eigen3  ( < 200 LOC )
+Single-Header Reference Implementation of Rigid Coherent Point Drift in C++ / Eigen3  ( < 80 LOC )
 
 Example programs include a very basic useage and a version with visualization. The algorithm is performant but not optimized with fast gaussian transform (yet).
 
+The algorithm is robust against noise and occlusion.
+
 Reference: Point Set Registration: Coherent Point Drift, Andriy Myronenko and Xubo Song (2010)
+
+![Coherent Point Drift Example on Cuboid with 3 Different Side Lengths, Constant Scale](https://github.com/weigert/CoherentPointDrift/blob/master/screenshots/cpd.gif)
+
+Coherent Point Drift Example on Cuboid with 3 Different Side Lengths, Constant Scale. Example Program 1
 
 ## Algorithm
 
