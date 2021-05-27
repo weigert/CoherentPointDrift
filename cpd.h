@@ -117,6 +117,11 @@ float Pmn(Vector3d x, Vector3d& y){
   return exp(-0.5f/var*(x-y).dot(x-y)); //Gaussian Probability
 };
 
+//Individual Assignment Probability for x_n, y_m!
+float Pmn(double& L2S){
+  return exp(-0.5f/var*L2S); //Gaussian Probability
+};
+
 float bias = 0.0f;
 
 void direct(RowMatrix& X, RowMatrix& Y){
@@ -158,7 +163,7 @@ void singletree(RowMatrix& X, RowMatrix& Y){
     const size_t nmatches = kdtree->index->radiusSearch(&YV(0), 9.0f*var, matches, params);
 
     for(auto& match: matches){
-      P(m,match.first) = Pmn(X.block<1,3>(match.first,0), YV);
+      P(m,match.first) = Pmn(match.second); //Distances Squared Returned by Nanoflann
       Z += P(m,match.first);
     }
 
