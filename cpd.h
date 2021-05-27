@@ -3,6 +3,8 @@
 Coherent Point Drift Algorithm!
 Author: Nicholas McDonald
 
+Utilizes nanoflann for kdtree lookup
+
 */
 
 #include <Eigen/Dense>
@@ -10,6 +12,8 @@ Author: Nicholas McDonald
 #include <glm/glm.hpp>
 #include <functional>
 #include <iostream>
+
+#include "nanoflann.hpp"
 
 #define PI 3.14159265f
 
@@ -26,17 +30,19 @@ float N = 0.0f;   //Size of Sampled Pointset
 float M = 0.0f;   //Size of Centroid Pointset
 
 float s;          //Scale
-Matrix3f R;       //Rotation
-Vector3f t;       //Translation
+Matrix3d R;       //Rotation
+Vector3d t;       //Translation
 float var;        //Variance
 
-float w = 0.0f;   //Noise Estimate (Free Parameter)
-MatrixXf P;       //Posterior Probability Matrix (Assignments)
-VectorXf PX;      //Sum over X
-VectorXf PY;      //Sum over Y
+float w = 0.0f;  //Noise Estimate (Free Parameter)
+Matrix<double,-1,-1,RowMajor> P;       //Posterior Probability Matrix (Assignments)
+VectorXd PX;      //Sum over X
+VectorXd PY;      //Sum over Y
 
 //Options
 bool enforcescale = true; //Force Scale to be s = 1
+
+double scenescale = 0.0;
 
 /*
 ================================================================================
@@ -44,13 +50,14 @@ bool enforcescale = true; //Force Scale to be s = 1
 ================================================================================
 */
 
-JacobiSVD<MatrixXf> svd;
+JacobiSVD<Matrix<double,-1,-1,RowMajor>> svd;
+nanoflann::KDTreeEigenMatrixAdaptor<Matrix<double,-1,-1,RowMajor>>* kdtree;
 
-void initialize(MatrixXf& X, MatrixXf& Y){
+void initialize(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y){
 
   s = 1.0f;                     //Initialize Scale to 1
-  R = Matrix3f::Identity();     //Initialize Rotation Matrix to Identity
-  t = Vector3f::Zero();         //Initialize Translation Vector to Zero
+  R = Matrix3d::Identity();     //Initialize Rotation Matrix to Identity
+  t = Vector3d::Zero();         //Initialize Translation Vector to Zero
 
   N = X.rows();                 //Get the Number of Points in "Sampled Set"
   M = Y.rows();                 //Get the Number of Points in "Centroid Set"
@@ -58,69 +65,145 @@ void initialize(MatrixXf& X, MatrixXf& Y){
   var = 0.0f;                   //Compute the Worst-Case Variance
   for(size_t n = 0; n < N; n++)
   for(size_t m = 0; m < M; m++){
-    Vector3f d = (X.block<1,3>(n,0)-Y.block<1,3>(m,0)); //Distance Between Two Points x_n, y_m
-    var += d.dot(d)/(float)(D*N*M);                     //Normalize and Add
+    Vector3d d = (X.block<1,3>(n,0)-Y.block<1,3>(m,0)); //Distance Between Two Points x_n, y_m
+    float dd = d.dot(d);
+    if(dd > scenescale) scenescale = dd;
+    var += dd/(float)(D*N*M);                     //Normalize and Add
   }
 
-  P = MatrixXf::Zero(M,N);      //Allocate Memory for Probability Matrix
+  P = Matrix<double,-1,-1,RowMajor>::Zero(M,N);      //Allocate Memory for Probability Matrix
+
+  //Sort into Kd-Tree
+  std::cout<<"Building KDTree"<<std::endl;
+  kdtree = new nanoflann::KDTreeEigenMatrixAdaptor<Matrix<double,-1,-1,RowMajor>>(3, std::cref(X), 10);
+  kdtree->index->buildIndex();
+  std::cout<<"Done"<<std::endl;
 
 }
 
-void estimate(MatrixXf& X, MatrixXf& Y){
+void pose(mat4 guess){  //Set an Initial Pose!
+
+  R(0,0) = guess[0][0];
+  R(0,1) = guess[1][0];
+  R(0,2) = guess[2][0];
+  R(1,0) = guess[0][1];
+  R(1,1) = guess[1][1];
+  R(1,2) = guess[2][1];
+  R(2,0) = guess[0][2];
+  R(2,1) = guess[1][2];
+  R(2,2) = guess[2][2];
+  t(0) = guess[3][0];
+  t(1) = guess[3][1];
+  t(2) = guess[3][2];
+
+}
+
+/*
+void estimate(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y){
 
   //Individual Assignment Probability for x_n, y_m!
-  const function<float(Vector3f, Vector3f)> Pmn = [](Vector3f x, Vector3f y){
-    Vector3f d = (x-s*R*y-t);       //Rigid Transform
+  const function<float(Vector3d, Vector3d)> Pmn = [](Vector3d x, Vector3d y){
+    Vector3d d = (x-s*R*y-t);       //Rigid Transform
     return exp(-0.5f/var*d.dot(d)); //Gaussian Probability
   };
 
   //Constant Normalization Bias
   const float bias = pow(2.0f*PI*var, D/2.0f)*w/(1.0f-w)*M/N;
 
-  for(size_t n = 0; n < N; n++)     //Full Probability Matrix
-  for(size_t m = 0; m < M; m++)
-    P(m,n) = Pmn(X.block<1,3>(n,0), Y.block<1,3>(m,0));
+  PX = VectorXd::Zero(M); //Zero-Out Cumulative Probabilities
+  PY = VectorXd::Zero(N);
 
-  for(size_t n = 0; n < N; n++){    //Normalize
-    float Z = bias;                 //Add Bias
-    for(size_t m = 0; m < M; m++)   //Accumulate
-      Z += P(m,n);
-    for(size_t m = 0; m < M; m++)   //Divide
-      P(m,n) /= Z;
+  for(size_t m = 0; m < M; m++){
+
+    float Z = bias;
+
+    for(size_t n = 0; n < N; n++){
+      P(m,n) = Pmn(X.block<1,3>(n,0), Y.block<1,3>(m,0)); //Compute Probability
+      Z += P(m,n);                                        //Accumulate Partition Function
+    }
+
+    for(size_t n = 0; n < N; n++){
+      P(m,n) /= Z;                                        //Normalize Density
+      PX(m) += P(m,n);                                    //Accumulate Probability along N
+      PY(n) += P(m,n);                                    //Accumulate Probability along M
+    }
+
   }
 
-  PY = P.rowwise().sum();           //Sum over all n
-  PX = P.colwise().sum();           //Sum over all m
+}
+*/
+
+void estimate(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y){
+
+  //Individual Assignment Probability for x_n, y_m!
+  const function<float(Vector3d, Vector3d)> Pmn = [](Vector3d x, Vector3d y){
+    Vector3d d = (x-y);             //Rigid Transform ALREADY INCLUDED!
+    return exp(-0.5f/var*d.dot(d)); //Gaussian Probability
+  };
+
+  //Constant Normalization Bias
+  const float bias = pow(2.0f*PI*var, D/2.0f)*w/(1.0f-w)*M/N;
+
+  //Zero the Probability Matrix!
+  P = Matrix<double,-1,-1,RowMajor>::Zero(M,N);
+  PX = VectorXd::Zero(M); //Zero-Out Cumulative Probabilities
+  PY = VectorXd::Zero(N);
+
+  //Approximate Z differently!
+  vector<pair<long int,double> > matches;
+  nanoflann::SearchParams params;
+
+  for(size_t m = 0; m < M; m++){
+
+    float Z = bias;
+
+    Vector3d YV = Y.block<1,3>(m,0);
+    YV = s*R*YV+t;  //Rigid Transform Here!
+
+    const size_t nmatches = kdtree->index->radiusSearch(&YV(0), sqrt(scenescale*var), matches, params);
+
+    for(auto& match: matches){
+      P(m,match.first) = Pmn(X.block<1,3>(match.first,0), YV);
+      Z += P(m,match.first);
+    }
+
+    for(auto& match: matches){
+      P(m,match.first) /= Z;
+      PX(m) += P(m,match.first);                    //Accumulate Probability along N
+      PY(match.first) += P(m,match.first);          //Accumulate Probability along M
+    }
+
+  }
 
 }
 
-void maximize(MatrixXf& X, MatrixXf& Y){
+void maximize(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y){
 
   float Np = 1.0f/P.sum();                                //Normalization Constant
-  Vector3f uX = X.transpose()*PX*Np;                      //Average Position, X-Set
-  Vector3f uY = Y.transpose()*PY*Np;                      //Average Position, Y-Set
+  Vector3d uX = X.transpose()*PX*Np;                      //Average Position, X-Set
+  Vector3d uY = Y.transpose()*PY*Np;                      //Average Position, Y-Set
 
-  MatrixXf XC = X.rowwise() - uX.transpose();             //Centered X-Set
-  MatrixXf YC = Y.rowwise() - uY.transpose();             //Centered Y-Set
+  Matrix<double,-1,-1,RowMajor> XC = X.rowwise() - uX.transpose();             //Centered X-Set
+  Matrix<double,-1,-1,RowMajor> YC = Y.rowwise() - uY.transpose();             //Centered Y-Set
 
-  MatrixXf A = XC.transpose()*P.transpose()*YC;           //Singular Value Decomp. Matrix
+  Matrix<double,-1,-1,RowMajor> A = XC.transpose()*P.transpose()*YC;           //Singular Value Decomp. Matrix
 
   svd.compute(A, ComputeFullU|ComputeFullV);              //Compute the SVD of A
-  MatrixXf U = svd.matrixU();                             //Get the SVD Matrix U
-  MatrixXf V = svd.matrixV();                             //Get the SVD Matrix V
+  Matrix<double,-1,-1,RowMajor> U = svd.matrixU();                             //Get the SVD Matrix U
+  Matrix<double,-1,-1,RowMajor> V = svd.matrixV();                             //Get the SVD Matrix V
 
-  MatrixXf C = MatrixXf::Identity(D, D);                  //Construct the SVD-Derived Matrix C
+  Matrix<double,-1,-1,RowMajor> C = Matrix<double,-1,-1,RowMajor>::Identity(D, D);                  //Construct the SVD-Derived Matrix C
   C(D-1, D-1) = (U*V.transpose()).determinant();
 
   //Compute the Rigid Transformation Parameters
   R = U*C*V.transpose();
   s = (A.transpose()*R).trace()/(YC.transpose()*PY.asDiagonal()*YC).trace();
-  t = uX - s*R*uY;
 
   //Recompute Standard Deviation
   var = Np/D*((XC.transpose()*PX.asDiagonal()*XC).trace() - s*(A.transpose()*R).trace());
 
   if(enforcescale) s = 1.0f;  //Enforce Constant Scale
+  t = uX - s*R*uY;
 
 }
 
@@ -140,35 +223,34 @@ void output(){
 
 //Single Iteration Step
 float oldvar = 0.0f;
-bool itersolve(MatrixXf& X, MatrixXf& Y, int& N, const float tol = 0.01f){
+bool itersolve(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y, int& N, const float tol = 0.01f){
 
   if(N-- <= 0 || abs(oldvar - var) <= tol) return false;
 
   oldvar = var;
-  cout<<"Iteration: "<<N<<endl;
-  cout<<"Estimating..."<<endl;
+//  cout<<"Iteration: "<<N<<endl;
+//  cout<<"Estimating..."<<endl;
   timer::benchmark<std::chrono::milliseconds>([&](){
 
-  cpd::estimate(X, Y);
+    cpd::estimate(X, Y);
 
   });
 
-  cout<<"Maximizing..."<<endl;
+//  cout<<"Maximizing..."<<endl;
 
-  timer::benchmark<std::chrono::milliseconds>([&](){
+//  timer::benchmark<std::chrono::milliseconds>([&](){
 
   cpd::maximize(X, Y);
 
-  });
+//  });
 
-  cpd::output();
+//  cpd::output();
   return true;
 
 }
 
-void solve(MatrixXf& X, MatrixXf& Y, const int maxN, const float tol = 0.01f){
-  int niter = maxN;
-  while(itersolve(X, Y, niter, tol));
+void solve(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y, int& maxN, const float tol = 0.01f){
+  while(itersolve(X, Y, maxN, tol));
 }
 
 mat4 rigid(){                       //Extract a glm-based 4x4 transformation matrix from Y->X
@@ -185,8 +267,8 @@ mat4 rigid(){                       //Extract a glm-based 4x4 transformation mat
 ================================================================================
 */
 
-MatrixXf makeset(vector<vec2>& pointset){
-  MatrixXf S(pointset.size(), 2);
+Matrix<double,-1,-1,RowMajor> makeset(vector<vec2>& pointset){
+  Matrix<double,-1,-1,RowMajor> S(pointset.size(), 2);
   for(size_t i = 0; i < pointset.size(); i++){
     S(i, 0) = pointset[i].x;
     S(i, 1) = pointset[i].y;
@@ -195,8 +277,8 @@ MatrixXf makeset(vector<vec2>& pointset){
   return S;
 }
 
-MatrixXf makeset(vector<vec3>& pointset){
-  MatrixXf S(pointset.size(), 3);
+Matrix<double,-1,-1,RowMajor> makeset(vector<vec3>& pointset){
+  Matrix<double,-1,-1,RowMajor> S(pointset.size(), 3);
   for(size_t i = 0; i < pointset.size(); i++){
     S(i, 0) = pointset[i].x;
     S(i, 1) = pointset[i].y;

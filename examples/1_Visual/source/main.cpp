@@ -4,6 +4,8 @@
 #include <TinyEngine/camera>
 #include <TinyEngine/timer>
 
+//#include <fgt.hpp>
+
 #include "include/shape.h"
 #include "../../../cpd.h"
 
@@ -19,7 +21,7 @@ int main( int argc, char* args[] ) {
 
 	Square3D model;									//Model we want to instance render!
 
-	const int Npoints = 2500;
+	const int Npoints = 5000;
 
 	//Generate Point Clouds
 	std::vector<glm::vec3> pointsA = shape::cube(Npoints, glm::vec3(0.25, 0.5, 1.0f));
@@ -34,8 +36,8 @@ int main( int argc, char* args[] ) {
 	shape::noise(pointsB, 2.0f); //Add Gaussian Noise
 
 	//Compute the Theoretical Rigid Transformation
-	Eigen::MatrixXf X = cpd::makeset(pointsA);
-	Eigen::MatrixXf Y = cpd::makeset(pointsB);
+	Eigen::Matrix<double,-1,-1,Eigen::RowMajor> X = cpd::makeset(pointsA);
+	Eigen::Matrix<double,-1,-1,Eigen::RowMajor> Y = cpd::makeset(pointsB);
 
 	std::cout<<"Initializing CPD"<<std::endl;
 	cpd::initialize(X, Y);
@@ -119,6 +121,8 @@ int main( int argc, char* args[] ) {
 		cam::pan(0.1f);
 
 		cpd::itersolve(X, Y, niter, 0.0001f);
+
+		std::cout<<niter<<" "<<cpd::var<<std::endl;
 		glm::mat4 transform = cpd::rigid();
 
 		models.clear();
