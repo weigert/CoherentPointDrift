@@ -36,8 +36,8 @@ int main( int argc, char* args[] ) {
 	shape::noise(pointsB, 2.0f); //Add Gaussian Noise
 
 	//Compute the Theoretical Rigid Transformation
-	Eigen::Matrix<double,-1,-1,Eigen::RowMajor> X = cpd::makeset(pointsA);
-	Eigen::Matrix<double,-1,-1,Eigen::RowMajor> Y = cpd::makeset(pointsB);
+	cpd::RowMatrix X = cpd::makeset(pointsA);
+	cpd::RowMatrix Y = cpd::makeset(pointsB);
 
 	std::cout<<"Initializing CPD"<<std::endl;
 	cpd::initialize(X, Y);

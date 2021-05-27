@@ -23,6 +23,10 @@ using namespace Eigen;
 using namespace std;
 using namespace glm;
 
+//For convenience:
+//  Rowmajor makes sense because we want points to be ordered consecutively in an NxD Matrix!
+typedef Matrix<double,-1,-1,RowMajor> RowMatrix;
+
 //All the properties needed for the algorithm below!
 
 float D = 0.0f;   //Dimensionality of Pointsets
@@ -34,15 +38,24 @@ Matrix3d R;       //Rotation
 Vector3d t;       //Translation
 float var;        //Variance
 
-float w = 0.0f;  //Noise Estimate (Free Parameter)
-Matrix<double,-1,-1,RowMajor> P;       //Posterior Probability Matrix (Assignments)
+float w = 0.0f;   //Noise Estimate (Free Parameter)
+RowMatrix P;      //Posterior Probability Matrix (Assignments)
 VectorXd PX;      //Sum over X
 VectorXd PY;      //Sum over Y
 
 //Options
 bool enforcescale = true; //Force Scale to be s = 1
 
-double scenescale = 0.0;
+//Parameters Relevant for Acceleration!
+
+//KD-Tree
+bool usetree = false;  //Whether to use the tree acceleration
+
+nanoflann::KDTreeEigenMatrixAdaptor<RowMatrix>* kdtree = NULL;
+const int nleaf = 25;       //Number of Points in Leaf-Node of Kd-Tree
+
+double scenescale = 0.0;    //Search radius for "near" centroids is scaled by the diagonal of pointset bounding box!
+                            //Note: Computed automatically
 
 /*
 ================================================================================
@@ -50,10 +63,9 @@ double scenescale = 0.0;
 ================================================================================
 */
 
-JacobiSVD<Matrix<double,-1,-1,RowMajor>> svd;
-nanoflann::KDTreeEigenMatrixAdaptor<Matrix<double,-1,-1,RowMajor>>* kdtree;
+JacobiSVD<RowMatrix> svd;
 
-void initialize(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y){
+void initialize(RowMatrix& X, RowMatrix& Y){
 
   s = 1.0f;                     //Initialize Scale to 1
   R = Matrix3d::Identity();     //Initialize Rotation Matrix to Identity
@@ -62,22 +74,24 @@ void initialize(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>&
   N = X.rows();                 //Get the Number of Points in "Sampled Set"
   M = Y.rows();                 //Get the Number of Points in "Centroid Set"
 
+  scenescale = 0.0;            //Reset Scenescale
   var = 0.0f;                   //Compute the Worst-Case Variance
   for(size_t n = 0; n < N; n++)
   for(size_t m = 0; m < M; m++){
     Vector3d d = (X.block<1,3>(n,0)-Y.block<1,3>(m,0)); //Distance Between Two Points x_n, y_m
     float dd = d.dot(d);
-    if(dd > scenescale) scenescale = dd;
-    var += dd/(float)(D*N*M);                     //Normalize and Add
+    if(usetree && dd > scenescale) scenescale = dd;     //scenescale = max. distance squared
+    var += dd/(float)(D*N*M);                           //Normalize and Add
   }
 
-  P = Matrix<double,-1,-1,RowMajor>::Zero(M,N);      //Allocate Memory for Probability Matrix
+  P = RowMatrix::Zero(M,N);      //Allocate Memory for Probability Matrix
 
-  //Sort into Kd-Tree
-  std::cout<<"Building KDTree"<<std::endl;
-  kdtree = new nanoflann::KDTreeEigenMatrixAdaptor<Matrix<double,-1,-1,RowMajor>>(3, std::cref(X), 10);
-  kdtree->index->buildIndex();
-  std::cout<<"Done"<<std::endl;
+  //Sort the static pointset (i.e. samples) into a kd-tree!
+  if(usetree){
+    if(kdtree != NULL) delete kdtree; //handle "reinitialization"
+    kdtree = new nanoflann::KDTreeEigenMatrixAdaptor<RowMatrix>(D, cref(X), nleaf);
+    kdtree->index->buildIndex();
+  }
 
 }
 
@@ -99,57 +113,44 @@ void pose(mat4 guess){  //Set an Initial Pose!
 }
 
 /*
-void estimate(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y){
+================================================================================
+            Gauss Transform Methods / Probability Computation
+================================================================================
+*/
 
-  //Individual Assignment Probability for x_n, y_m!
-  const function<float(Vector3d, Vector3d)> Pmn = [](Vector3d x, Vector3d y){
-    Vector3d d = (x-s*R*y-t);       //Rigid Transform
-    return exp(-0.5f/var*d.dot(d)); //Gaussian Probability
-  };
+//Individual Assignment Probability for x_n, y_m!
+float Pmn(Vector3d x, Vector3d& y){
+  return exp(-0.5f/var*(x-y).dot(x-y)); //Gaussian Probability
+};
 
-  //Constant Normalization Bias
-  const float bias = pow(2.0f*PI*var, D/2.0f)*w/(1.0f-w)*M/N;
+float bias = 0.0f;
 
-  PX = VectorXd::Zero(M); //Zero-Out Cumulative Probabilities
-  PY = VectorXd::Zero(N);
+void direct(RowMatrix& X, RowMatrix& Y){
 
   for(size_t m = 0; m < M; m++){
 
     float Z = bias;
 
+    Vector3d YV = Y.block<1,3>(m,0);
+    YV = s*R*YV+t;  //Rigid Transform Here!
+
     for(size_t n = 0; n < N; n++){
-      P(m,n) = Pmn(X.block<1,3>(n,0), Y.block<1,3>(m,0)); //Compute Probability
+      P(m,n) = Pmn(X.block<1,3>(n,0), YV); //Compute Probability
       Z += P(m,n);                                        //Accumulate Partition Function
     }
 
     for(size_t n = 0; n < N; n++){
       P(m,n) /= Z;                                        //Normalize Density
-      PX(m) += P(m,n);                                    //Accumulate Probability along N
-      PY(n) += P(m,n);                                    //Accumulate Probability along M
+      PX(n) += P(m,n);                                    //Accumulate Probability along N
+      PY(m) += P(m,n);                                    //Accumulate Probability along M
     }
 
   }
 
 }
-*/
 
-void estimate(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y){
+void singletree(RowMatrix& X, RowMatrix& Y){
 
-  //Individual Assignment Probability for x_n, y_m!
-  const function<float(Vector3d, Vector3d)> Pmn = [](Vector3d x, Vector3d y){
-    Vector3d d = (x-y);             //Rigid Transform ALREADY INCLUDED!
-    return exp(-0.5f/var*d.dot(d)); //Gaussian Probability
-  };
-
-  //Constant Normalization Bias
-  const float bias = pow(2.0f*PI*var, D/2.0f)*w/(1.0f-w)*M/N;
-
-  //Zero the Probability Matrix!
-  P = Matrix<double,-1,-1,RowMajor>::Zero(M,N);
-  PX = VectorXd::Zero(M); //Zero-Out Cumulative Probabilities
-  PY = VectorXd::Zero(N);
-
-  //Approximate Z differently!
   vector<pair<long int,double> > matches;
   nanoflann::SearchParams params;
 
@@ -160,7 +161,7 @@ void estimate(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y
     Vector3d YV = Y.block<1,3>(m,0);
     YV = s*R*YV+t;  //Rigid Transform Here!
 
-    const size_t nmatches = kdtree->index->radiusSearch(&YV(0), sqrt(scenescale*var), matches, params);
+    const size_t nmatches = kdtree->index->radiusSearch(&YV(0), pow(scenescale,1.0f/D)*sqrt(var), matches, params);
 
     for(auto& match: matches){
       P(m,match.first) = Pmn(X.block<1,3>(match.first,0), YV);
@@ -169,30 +170,52 @@ void estimate(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y
 
     for(auto& match: matches){
       P(m,match.first) /= Z;
-      PX(m) += P(m,match.first);                    //Accumulate Probability along N
-      PY(match.first) += P(m,match.first);          //Accumulate Probability along M
+      PX(match.first) += P(m,match.first);          //Accumulate Probability along M
+      PY(m) += P(m,match.first);                    //Accumulate Probability along N
     }
 
   }
 
 }
 
-void maximize(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y){
+/*
+================================================================================
+                  Expectation Maximization Algorithm
+================================================================================
+*/
+
+void estimate(RowMatrix& X, RowMatrix& Y){
+
+  //Zero-Out Probabilities
+  P = RowMatrix::Zero(M,N);
+  PX = VectorXd::Zero(N);
+  PY = VectorXd::Zero(M);
+
+  //Compute Bias
+  bias = pow(2.0f*PI*var, D/2.0f)*w/(1.0f-w)*M/N;
+
+  //Compute P, PX, PY (~ Gauss Transform)
+  if(usetree) singletree(X, Y);
+  else direct(X, Y);
+
+}
+
+void maximize(RowMatrix& X, RowMatrix& Y){
 
   float Np = 1.0f/P.sum();                                //Normalization Constant
   Vector3d uX = X.transpose()*PX*Np;                      //Average Position, X-Set
   Vector3d uY = Y.transpose()*PY*Np;                      //Average Position, Y-Set
 
-  Matrix<double,-1,-1,RowMajor> XC = X.rowwise() - uX.transpose();             //Centered X-Set
-  Matrix<double,-1,-1,RowMajor> YC = Y.rowwise() - uY.transpose();             //Centered Y-Set
+  RowMatrix XC = X.rowwise() - uX.transpose();            //Centered X-Set
+  RowMatrix YC = Y.rowwise() - uY.transpose();            //Centered Y-Set
 
-  Matrix<double,-1,-1,RowMajor> A = XC.transpose()*P.transpose()*YC;           //Singular Value Decomp. Matrix
+  RowMatrix A = XC.transpose()*P.transpose()*YC;          //Singular Value Decomp. Matrix
 
   svd.compute(A, ComputeFullU|ComputeFullV);              //Compute the SVD of A
-  Matrix<double,-1,-1,RowMajor> U = svd.matrixU();                             //Get the SVD Matrix U
-  Matrix<double,-1,-1,RowMajor> V = svd.matrixV();                             //Get the SVD Matrix V
+  RowMatrix U = svd.matrixU();                            //Get the SVD Matrix U
+  RowMatrix V = svd.matrixV();                            //Get the SVD Matrix V
 
-  Matrix<double,-1,-1,RowMajor> C = Matrix<double,-1,-1,RowMajor>::Identity(D, D);                  //Construct the SVD-Derived Matrix C
+  RowMatrix C = RowMatrix::Identity(D, D);                //Construct the SVD-Derived Matrix C
   C(D-1, D-1) = (U*V.transpose()).determinant();
 
   //Compute the Rigid Transformation Parameters
@@ -223,7 +246,7 @@ void output(){
 
 //Single Iteration Step
 float oldvar = 0.0f;
-bool itersolve(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y, int& N, const float tol = 0.01f){
+bool itersolve(RowMatrix& X, RowMatrix& Y, int& N, const float tol = 0.01f){
 
   if(N-- <= 0 || abs(oldvar - var) <= tol) return false;
 
@@ -249,7 +272,7 @@ bool itersolve(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& 
 
 }
 
-void solve(Matrix<double,-1,-1,RowMajor>& X, Matrix<double,-1,-1,RowMajor>& Y, int& maxN, const float tol = 0.01f){
+void solve(RowMatrix& X, RowMatrix& Y, int& maxN, const float tol = 0.01f){
   while(itersolve(X, Y, maxN, tol));
 }
 
@@ -267,8 +290,8 @@ mat4 rigid(){                       //Extract a glm-based 4x4 transformation mat
 ================================================================================
 */
 
-Matrix<double,-1,-1,RowMajor> makeset(vector<vec2>& pointset){
-  Matrix<double,-1,-1,RowMajor> S(pointset.size(), 2);
+RowMatrix makeset(vector<vec2>& pointset){
+  RowMatrix S(pointset.size(), 2);
   for(size_t i = 0; i < pointset.size(); i++){
     S(i, 0) = pointset[i].x;
     S(i, 1) = pointset[i].y;
@@ -277,8 +300,8 @@ Matrix<double,-1,-1,RowMajor> makeset(vector<vec2>& pointset){
   return S;
 }
 
-Matrix<double,-1,-1,RowMajor> makeset(vector<vec3>& pointset){
-  Matrix<double,-1,-1,RowMajor> S(pointset.size(), 3);
+RowMatrix makeset(vector<vec3>& pointset){
+  RowMatrix S(pointset.size(), 3);
   for(size_t i = 0; i < pointset.size(); i++){
     S(i, 0) = pointset[i].x;
     S(i, 1) = pointset[i].y;
