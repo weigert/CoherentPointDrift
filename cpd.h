@@ -49,13 +49,10 @@ bool enforcescale = true; //Force Scale to be s = 1
 //Parameters Relevant for Acceleration!
 
 //KD-Tree
-bool usetree = false;  //Whether to use the tree acceleration
+bool usetree = true;  //Whether to use the tree acceleration
 
 nanoflann::KDTreeEigenMatrixAdaptor<RowMatrix>* kdtree = NULL;
 const int nleaf = 25;       //Number of Points in Leaf-Node of Kd-Tree
-
-double scenescale = 0.0;    //Search radius for "near" centroids is scaled by the diagonal of pointset bounding box!
-                            //Note: Computed automatically
 
 /*
 ================================================================================
@@ -74,14 +71,11 @@ void initialize(RowMatrix& X, RowMatrix& Y){
   N = X.rows();                 //Get the Number of Points in "Sampled Set"
   M = Y.rows();                 //Get the Number of Points in "Centroid Set"
 
-  scenescale = 0.0;            //Reset Scenescale
   var = 0.0f;                   //Compute the Worst-Case Variance
   for(size_t n = 0; n < N; n++)
   for(size_t m = 0; m < M; m++){
     Vector3d d = (X.block<1,3>(n,0)-Y.block<1,3>(m,0)); //Distance Between Two Points x_n, y_m
-    float dd = d.dot(d);
-    if(usetree && dd > scenescale) scenescale = dd;     //scenescale = max. distance squared
-    var += dd/(float)(D*N*M);                           //Normalize and Add
+    var += d.dot(d)/(float)(D*N*M);                           //Normalize and Add
   }
 
   P = RowMatrix::Zero(M,N);      //Allocate Memory for Probability Matrix
@@ -161,7 +155,7 @@ void singletree(RowMatrix& X, RowMatrix& Y){
     Vector3d YV = Y.block<1,3>(m,0);
     YV = s*R*YV+t;  //Rigid Transform Here!
 
-    const size_t nmatches = kdtree->index->radiusSearch(&YV(0), pow(scenescale,1.0f/D)*sqrt(var), matches, params);
+    const size_t nmatches = kdtree->index->radiusSearch(&YV(0), 9.0f*var, matches, params);
 
     for(auto& match: matches){
       P(m,match.first) = Pmn(X.block<1,3>(match.first,0), YV);
