@@ -38,20 +38,22 @@ Matrix3d R;       //Rotation
 Vector3d t;       //Translation
 float var;        //Variance
 
-float w = 0.0f;   //Noise Estimate (Free Parameter)
+const float w = 0.0f;   //Noise Estimate (Free Parameter)
 RowMatrix P;      //Posterior Probability Matrix (Assignments)
 VectorXd PX;      //Sum over X
 VectorXd PY;      //Sum over Y
 
 //Options
-bool enforcescale = true; //Force Scale to be s = 1
+const bool enforcescale = true; //Force Scale to be s = 1
 
 //Parameters Relevant for Acceleration!
 
 //KD-Tree
-bool usetree = true;  //Whether to use the tree acceleration
+const bool usetree = true;  //Whether to use the tree acceleration
+const bool usedual = true;
 
 nanoflann::KDTreeEigenMatrixAdaptor<RowMatrix>* kdtree = NULL;
+nanoflann::KDTreeEigenMatrixAdaptor<RowMatrix>* ytree = NULL;
 const int nleaf = 25;       //Number of Points in Leaf-Node of Kd-Tree
 
 /*
@@ -85,6 +87,13 @@ void initialize(RowMatrix& X, RowMatrix& Y){
     if(kdtree != NULL) delete kdtree; //handle "reinitialization"
     kdtree = new nanoflann::KDTreeEigenMatrixAdaptor<RowMatrix>(D, cref(X), nleaf);
     kdtree->index->buildIndex();
+
+    if(usedual){
+      if(ytree != NULL) delete ytree;
+      ytree = new nanoflann::KDTreeEigenMatrixAdaptor<RowMatrix>(D, cref(Y), nleaf);
+      ytree->index->buildIndex();
+    }
+
   }
 
 }
@@ -177,6 +186,56 @@ void singletree(RowMatrix& X, RowMatrix& Y){
 
 }
 
+void dualtree(RowMatrix& X, RowMatrix& Y){
+
+  vector<pair<long int,double> > xmatches;
+  vector<pair<long int,double> > ymatches;
+  nanoflann::SearchParams params;
+
+  vector<bool> openset(M, true);
+
+  const double yrad = 15.0f;
+
+  for(size_t i = 0; i < openset.size(); i++){
+    if(!openset[i]) continue; //Skip Processed Y-Elements
+    openset[i] = false;
+
+    Vector3d YC = Y.block<1,3>(i,0);        //Search around this Y-Guy
+
+    //Search without Rigid Transform
+    const size_t mmatches = ytree->index->radiusSearch(&YC(0), yrad, ymatches, params);
+
+    //Search with Rigid Transform
+    YC = s*R*YC+t;  //Rigid Transform Here!
+    const size_t nmatches = kdtree->index->radiusSearch(&YC(0), 9.0f*var+yrad, xmatches, params);
+
+    //Iterate over all nearby points to this guy
+    for(auto& ymatch: ymatches){
+      if(!openset[ymatch.first]) continue;  //Already processed
+      openset[ymatch.first] = false;
+
+      float Z = bias;
+
+      Vector3d YV = Y.block<1,3>(ymatch.first,0);
+      YV = s*R*YV+t;  //Rigid Transform Here!
+
+      for(auto& xmatch: xmatches){
+        P(ymatch.first,xmatch.first) = Pmn(X.block<1,3>(xmatch.first,0), YV); //Distances Squared Returned by Nanoflann
+        Z += P(ymatch.first,xmatch.first);
+      }
+
+      for(auto& xmatch: xmatches){
+        P(ymatch.first,xmatch.first) /= Z;
+        PX(xmatch.first) += P(ymatch.first,xmatch.first);          //Accumulate Probability along M
+        PY(ymatch.first) += P(ymatch.first,xmatch.first);                    //Accumulate Probability along N
+      }
+
+    }
+
+  }
+
+}
+
 /*
 ================================================================================
                   Expectation Maximization Algorithm
@@ -194,7 +253,10 @@ void estimate(RowMatrix& X, RowMatrix& Y){
   bias = pow(2.0f*PI*var, D/2.0f)*w/(1.0f-w)*M/N;
 
   //Compute P, PX, PY (~ Gauss Transform)
-  if(usetree) singletree(X, Y);
+  if(usetree){
+    if(usedual) dualtree(X, Y);
+    else singletree(X, Y);
+  }
   else direct(X, Y);
 
 }
@@ -275,11 +337,20 @@ void solve(RowMatrix& X, RowMatrix& Y, int& maxN, const float tol = 0.01f){
   while(itersolve(X, Y, maxN, tol));
 }
 
-mat4 rigid(){                       //Extract a glm-based 4x4 transformation matrix from Y->X
-  mat4 transform = {s*R(0,0), s*R(0,1), s*R(0,2), t(0),
+dmat4 rigid(){                       //Extract a glm-based 4x4 transformation matrix from Y->X
+  dmat4 transform = {s*R(0,0), s*R(0,1), s*R(0,2), t(0),
                     s*R(1,0), s*R(1,1), s*R(1,2), t(1),
                     s*R(2,0), s*R(2,1), s*R(2,2), t(2),
                     0,        0,        0,        1.0f};
+  return transpose(transform); //Tranpose because of Column Major Ordering
+}
+
+dmat4 rigidinverse(){                       //Extract a glm-based 4x4 transformation matrix from Y->X
+  dmat4 transform = { s*R(0,0), s*R(1,0), s*R(2,0), -t(0),
+                      s*R(0,1), s*R(1,1), s*R(2,1), -t(1),
+                      s*R(0,2), s*R(1,2), s*R(2,2), -t(2),
+                      0,        0,        0,        1.0f};
+
   return transpose(transform); //Tranpose because of Column Major Ordering
 }
 
